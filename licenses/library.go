@@ -22,7 +22,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/google/go-licenses/v2/internal/third_party/pkgsite/source"
+	"github.com/nammn/go-licenses/v2/internal/third_party/pkgsite/source"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/tools/go/packages"
 	"k8s.io/klog/v2"
@@ -156,7 +156,7 @@ func Libraries(ctx context.Context, classifier Classifier, includeTests bool, ig
 
 			if p.Module == nil {
 				otherErrorOccurred = true
-				klog.Errorf("Package %s does not have module info. Non go modules projects are no longer supported. For feedback, refer to https://github.com/google/go-licenses/issues/128.", p.PkgPath)
+				klog.Errorf("Package %s does not have module info. Non go modules projects are no longer supported. For feedback, refer to https://github.com/nammn/go-licenses/issues/128.", p.PkgPath)
 				return false
 			}
 
@@ -375,7 +375,7 @@ func (l *Library) FileURL(ctx context.Context, cl *source.Client, filePath strin
 		// This always happens for the module in development.
 		// Note#1 if we pass version=HEAD to source.ModuleInfo, github tag for modules not at the root
 		// of the repo will be incorrect, because there's a convention that:
-		// * I have a module at github.com/google/go-licenses/submod.
+		// * I have a module at github.com/nammn/go-licenses/submod.
 		// * The module is of version v1.0.0.
 		// Then the github tag should be submod/v1.0.0.
 		// In our case, if we pass HEAD as version, the result commit will be submod/HEAD which is incorrect.
@@ -386,7 +386,7 @@ func (l *Library) FileURL(ctx context.Context, cl *source.Client, filePath strin
 		// always refers to the default branch, so it's better than
 		// both of master/main when we do not know which branch is default.
 		// Examples:
-		// * https://github.com/google/go-licenses/blob/HEAD/LICENSE
+		// * https://github.com/nammn/go-licenses/blob/HEAD/LICENSE
 		// points to latest commit of master branch.
 		// * https://github.com/google/licenseclassifier/blob/HEAD/LICENSE
 		// points to latest commit of main branch.
@@ -398,7 +398,7 @@ func (l *Library) FileURL(ctx context.Context, cl *source.Client, filePath strin
 		return "", wrap(err)
 	}
 	// TODO: there are still rare cases this may result in an incorrect URL.
-	// https://github.com/google/go-licenses/issues/73#issuecomment-1005587408
+	// https://github.com/nammn/go-licenses/issues/73#issuecomment-1005587408
 	return remote.FileURL(relativePath), nil
 }
 

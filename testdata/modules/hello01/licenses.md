@@ -1,5 +1,5 @@
 
-## github.com/google/go-licenses/testdata/modules/hello01 ([Apache-2.0](https://github.com/google/go-licenses/blob/HEAD/testdata/modules/hello01/LICENSE))
+## github.com/nammn/go-licenses/testdata/modules/hello01 ([Apache-2.0](https://github.com/nammn/go-licenses/blob/HEAD/testdata/modules/hello01/LICENSE))
 
 ```
                                  Apache License
