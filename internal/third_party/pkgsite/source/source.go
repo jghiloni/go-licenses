@@ -321,7 +321,12 @@ func matchStatic(moduleOrRepoPath string) (repo, relativeModulePath string, _ ur
 	return "", "", urlTemplates{}, nil, derrors.NotFound
 }
 
-// moduleInfo represents the Origin field from the module cache's .info file.
+// moduleInfo represents the .info file written by the go command into the module
+// cache ($GOMODCACHE/cache/download/<escaped>/@v/<version>.info).
+// The Origin sub-struct mirrors cmd/go/internal/modfetch/codehost/codehost.go's
+// Origin struct (unexported, so we can't import it). We only need VCS, URL and
+// Subdir; the go command also writes Hash, Ref, TagPrefix and TagSum, which
+// json.Unmarshal silently ignores.
 type moduleInfo struct {
 	Origin *struct {
 		VCS    string `json:"VCS"`

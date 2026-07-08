@@ -1088,6 +1088,41 @@ func TestResolveViaCache(t *testing.T) {
 	}
 }
 
+// TestResolveViaCacheGoldenFile uses the real .info file copied from
+// $GOMODCACHE/cache/download/cel.dev/expr/@v/v0.25.1.info to ensure our
+// moduleInfo struct matches the format the go command actually writes.
+func TestResolveViaCacheGoldenFile(t *testing.T) {
+	cacheDir := t.TempDir()
+	t.Setenv("GOMODCACHE", cacheDir)
+
+	escaped, err := module.EscapePath("cel.dev/expr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	modDir := filepath.Join(cacheDir, "cache", "download", escaped, "@v")
+	if err := os.MkdirAll(modDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join("testdata", "cel.dev_expr_v0.25.1.info"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modDir, "v0.25.1.info"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	gotRepoURL, gotSubdir, err := resolveViaCache("cel.dev/expr", "v0.25.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wantRepoURL := "https://github.com/google/cel-spec"; gotRepoURL != wantRepoURL {
+		t.Errorf("repoURL: got %q, want %q", gotRepoURL, wantRepoURL)
+	}
+	if gotSubdir != "" {
+		t.Errorf("subdir: got %q, want empty", gotSubdir)
+	}
+}
+
 func TestModuleInfoDynamicCacheFallback(t *testing.T) {
 	cacheDir := t.TempDir()
 	t.Setenv("GOMODCACHE", cacheDir)
