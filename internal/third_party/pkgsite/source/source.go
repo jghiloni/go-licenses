@@ -22,10 +22,14 @@ package source
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"go/build"
 	"log" // We cannot use glog instead, because its "v" flag conflicts with other libraries we use.
 	"net/http"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -36,6 +40,7 @@ import (
 	"github.com/google/go-licenses/v2/internal/third_party/pkgsite/version"
 	"go.opencensus.io/plugin/ochttp"
 	"go.opencensus.io/trace"
+	"golang.org/x/mod/module"
 	"golang.org/x/net/context/ctxhttp"
 )
 
@@ -316,12 +321,71 @@ func matchStatic(moduleOrRepoPath string) (repo, relativeModulePath string, _ ur
 	return "", "", urlTemplates{}, nil, derrors.NotFound
 }
 
+// moduleInfo represents the Origin field from the module cache's .info file.
+type moduleInfo struct {
+	Origin *struct {
+		VCS    string `json:"VCS"`
+		URL    string `json:"URL"`
+		Subdir string `json:"Subdir"`
+	} `json:"Origin"`
+}
+
+// resolveViaCache tries to resolve a module's source repository URL from the
+// module cache's .info file. This avoids direct HTTP requests to vanity domains
+// (which can return CAPTCHAs and resolves to unknown) by reading the Origin data that the go command
+// already stored during go mod download.
+func resolveViaCache(modulePath, version string) (repoURL, subdir string, err error) {
+	gomodcache := os.Getenv("GOMODCACHE")
+	if gomodcache == "" {
+		gomodcache = filepath.Join(build.Default.GOPATH, "pkg", "mod")
+	}
+	escaped, err := module.EscapePath(modulePath)
+	if err != nil {
+		return "", "", err
+	}
+	infoPath := filepath.Join(gomodcache, "cache", "download", escaped, "@v", version+".info")
+	data, err := os.ReadFile(infoPath)
+	if err != nil {
+		return "", "", fmt.Errorf("reading module cache: %w", err)
+	}
+	var info moduleInfo
+	if err := json.Unmarshal(data, &info); err != nil {
+		return "", "", fmt.Errorf("parsing .info file: %w", err)
+	}
+	if info.Origin == nil || info.Origin.URL == "" {
+		return "", "", fmt.Errorf("no origin in .info for %s@%s", modulePath, version)
+	}
+	repoURL = strings.TrimSuffix(info.Origin.URL, "/")
+	if strings.HasSuffix(repoURL, ".git") {
+		repoURL = trimVCSSuffix(repoURL)
+	}
+	return repoURL, info.Origin.Subdir, nil
+}
+
 // moduleInfoDynamic uses the go-import and go-source meta tags to construct an Info.
 func moduleInfoDynamic(ctx context.Context, client *Client, modulePath, version string) (_ *Info, err error) {
 	defer derrors.Wrap(&err, "moduleInfoDynamic(ctx, client, %q, %q)", modulePath, version)
 
 	if client.httpClient == nil {
 		return nil, nil // for testing
+	}
+
+	// Try the module cache .info file first — avoids direct HTTP to vanity
+	// domains that may return CAPTCHAs.
+	if repoURL, subdir, cacheErr := resolveViaCache(modulePath, version); cacheErr == nil {
+		_, _, templates, transformCommit, _ := matchStatic(removeHTTPScheme(repoURL))
+		if templates != (urlTemplates{}) {
+			commit, isHash := commitFromVersion(version, subdir)
+			if transformCommit != nil {
+				commit = transformCommit(commit, isHash)
+			}
+			return &Info{
+				repoURL:   repoURL,
+				moduleDir: subdir,
+				commit:    commit,
+				templates: templates,
+			}, nil
+		}
 	}
 
 	sourceMeta, err := fetchMeta(ctx, client, modulePath)

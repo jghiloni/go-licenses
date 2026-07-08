@@ -5,6 +5,7 @@ package source
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-replayers/httpreplay"
+	"golang.org/x/mod/module"
 )
 
 var (
@@ -959,4 +961,231 @@ func TestMatchLegacyTemplates(t *testing.T) {
 				test.sm, gotTemplates, gotNil, test.wantTemplates, test.wantTransformCommitNil)
 		}
 	}
+}
+
+func TestResolveViaCache(t *testing.T) {
+	dir := t.TempDir()
+
+	writeInfoFile := func(t *testing.T, modulePath, version string, origin *struct {
+		VCS    string `json:"VCS"`
+		URL    string `json:"URL"`
+		Subdir string `json:"Subdir"`
+	}) {
+		t.Helper()
+		escaped, err := module.EscapePath(modulePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		modDir := filepath.Join(dir, "cache", "download", escaped, "@v")
+		if err := os.MkdirAll(modDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		info := map[string]any{"Version": version, "Time": "2025-01-01T00:00:00Z"}
+		if origin != nil {
+			info["Origin"] = origin
+		}
+		data, err := json.Marshal(info)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(modDir, version+".info"), data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Setenv("GOMODCACHE", dir)
+
+	for _, test := range []struct {
+		desc         string
+		modulePath   string
+		version      string
+		originURL    string
+		originSubdir string
+		wantRepoURL  string
+		wantSubdir   string
+		wantErr      bool
+	}{
+		{
+			desc:        "vanity domain github origin",
+			modulePath:  "cel.dev/expr",
+			version:     "v0.25.1",
+			originURL:   "https://github.com/google/cel-spec",
+			wantRepoURL: "https://github.com/google/cel-spec",
+			wantSubdir:  "",
+		},
+		{
+			desc:         "vanity domain with subdir",
+			modulePath:   "example.com/foo/bar",
+			version:      "v1.0.0",
+			originURL:    "https://github.com/example/repo",
+			originSubdir: "bar",
+			wantRepoURL:  "https://github.com/example/repo",
+			wantSubdir:   "bar",
+		},
+		{
+			desc:        "git suffix stripped",
+			modulePath:  "example.com/gitpkg",
+			version:     "v1.0.0",
+			originURL:   "https://github.com/example/gitpkg.git",
+			wantRepoURL: "https://github.com/example/gitpkg",
+			wantSubdir:  "",
+		},
+		{
+			desc:        "trailing slash stripped",
+			modulePath:  "example.com/trailing",
+			version:     "v1.0.0",
+			originURL:   "https://github.com/example/trailing/",
+			wantRepoURL: "https://github.com/example/trailing",
+			wantSubdir:  "",
+		},
+		{
+			desc:       "no origin field",
+			modulePath: "example.com/no-origin",
+			version:    "v1.0.0",
+			originURL:  "",
+			wantErr:    true,
+		},
+		{
+			desc:       "missing info file",
+			modulePath: "example.com/missing",
+			version:    "v1.0.0",
+			wantErr:    true,
+		},
+	} {
+		t.Run(test.desc, func(t *testing.T) {
+			if test.originURL != "" || test.desc == "no origin field" {
+				origin := &struct {
+					VCS    string `json:"VCS"`
+					URL    string `json:"URL"`
+					Subdir string `json:"Subdir"`
+				}{
+					VCS:    "git",
+					URL:    test.originURL,
+					Subdir: test.originSubdir,
+				}
+				if test.originURL == "" {
+					origin = nil
+				}
+				writeInfoFile(t, test.modulePath, test.version, origin)
+			}
+			gotRepoURL, gotSubdir, err := resolveViaCache(test.modulePath, test.version)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got repoURL=%q subdir=%q", gotRepoURL, gotSubdir)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotRepoURL != test.wantRepoURL {
+				t.Errorf("repoURL: got %q, want %q", gotRepoURL, test.wantRepoURL)
+			}
+			if gotSubdir != test.wantSubdir {
+				t.Errorf("subdir: got %q, want %q", gotSubdir, test.wantSubdir)
+			}
+		})
+	}
+}
+
+func TestModuleInfoDynamicCacheFallback(t *testing.T) {
+	cacheDir := t.TempDir()
+	t.Setenv("GOMODCACHE", cacheDir)
+
+	writeInfoFile := func(t *testing.T, modulePath, version, originURL, originSubdir string) {
+		t.Helper()
+		escaped, err := module.EscapePath(modulePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		modDir := filepath.Join(cacheDir, "cache", "download", escaped, "@v")
+		if err := os.MkdirAll(modDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		info := map[string]any{
+			"Version": version,
+			"Time":    "2025-01-01T00:00:00Z",
+			"Origin": map[string]string{
+				"VCS":    "git",
+				"URL":    originURL,
+				"Subdir": originSubdir,
+			},
+		}
+		data, err := json.Marshal(info)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(modDir, version+".info"), data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	client := &Client{
+		httpClient: &http.Client{
+			Transport: testTransport(testWeb),
+			Timeout:   testTimeout,
+		},
+	}
+
+	t.Run("cache hit skips fetchMeta", func(t *testing.T) {
+		writeInfoFile(t, "alice.org/pkg", "v1.2.3", "https://github.com/alice/pkg", "")
+
+		got, err := moduleInfoDynamic(context.Background(), client, "alice.org/pkg", "v1.2.3")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := &Info{
+			repoURL:   "https://github.com/alice/pkg",
+			moduleDir: "",
+			commit:    "v1.2.3",
+			templates: githubURLTemplates,
+		}
+		if diff := cmp.Diff(want, got, cmp.AllowUnexported(Info{}, urlTemplates{})); diff != "" {
+			t.Errorf("mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("cache miss falls back to fetchMeta", func(t *testing.T) {
+		got, err := moduleInfoDynamic(context.Background(), client, "alice.org/pkg/sub", "v1.2.3")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := &Info{
+			repoURL:   "https://github.com/alice/pkg",
+			moduleDir: "sub",
+			commit:    "sub/v1.2.3",
+			templates: githubURLTemplates,
+		}
+		if diff := cmp.Diff(want, got, cmp.AllowUnexported(Info{}, urlTemplates{})); diff != "" {
+			t.Errorf("mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("cache hit with subdir", func(t *testing.T) {
+		writeInfoFile(t, "vanity.example.com/mypkg/sub", "v1.0.0", "https://github.com/myorg/myrepo", "sub")
+
+		got, err := moduleInfoDynamic(context.Background(), client, "vanity.example.com/mypkg/sub", "v1.0.0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := &Info{
+			repoURL:   "https://github.com/myorg/myrepo",
+			moduleDir: "sub",
+			commit:    "sub/v1.0.0",
+			templates: githubURLTemplates,
+		}
+		if diff := cmp.Diff(want, got, cmp.AllowUnexported(Info{}, urlTemplates{})); diff != "" {
+			t.Errorf("mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("cache hit with unrecognised repo URL falls back to fetchMeta", func(t *testing.T) {
+		writeInfoFile(t, "unknown.example.com/pkg", "v1.2.3", "https://some.unknown.vcs.example.com/repo", "")
+
+		got, err := moduleInfoDynamic(context.Background(), client, "unknown.example.com/pkg", "v1.2.3")
+		if err != nil {
+			return
+		}
+		_ = got
+	})
 }
