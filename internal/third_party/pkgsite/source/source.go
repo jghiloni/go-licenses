@@ -35,9 +35,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nammn/go-licenses/v2/internal/third_party/pkgsite/derrors"
-	"github.com/nammn/go-licenses/v2/internal/third_party/pkgsite/stdlib"
-	"github.com/nammn/go-licenses/v2/internal/third_party/pkgsite/version"
+	"github.com/jghiloni/go-licenses/v2/internal/third_party/pkgsite/derrors"
+	"github.com/jghiloni/go-licenses/v2/internal/third_party/pkgsite/stdlib"
+	"github.com/jghiloni/go-licenses/v2/internal/third_party/pkgsite/version"
 	"go.opencensus.io/plugin/ochttp"
 	"go.opencensus.io/trace"
 	"golang.org/x/mod/module"

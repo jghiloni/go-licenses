@@ -20,5 +20,5 @@ package tags
 import (
 	// This import should be detected as being a transitive dependency of whatever
 	// imports this package.
-	_ "github.com/nammn/go-licenses/v2/licenses/testdata/indirect"
+	_ "github.com/jghiloni/go-licenses/v2/licenses/testdata/indirect"
 )

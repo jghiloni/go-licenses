@@ -43,9 +43,12 @@ Prerequisites:
 Typically, specify the Go package that builds your Go binary.
 go-licenses expects the same package argument format as "go build".
 For example:
-* A rooted import path like "github.com/nammn/go-licenses" or "github.com/nammn/go-licenses/licenses".
+* A rooted import path like "github.com/jghiloni/go-licenses" or "github.com/jghiloni/go-licenses/licenses".
 * A relative path that denotes the package in that directory, like "." or "./cmd/some-command".
 To learn more about Go package argument, run "go help packages".`
+
+	useWorkspace bool
+	goworkFile   string
 )
 
 func init() {
@@ -63,6 +66,8 @@ func init() {
 	}
 	rootCmd.PersistentFlags().BoolVar(&includeTests, "include_tests", false, "Include packages only imported by testing code.")
 	rootCmd.PersistentFlags().StringSliceVar(&ignore, "ignore", nil, "Package path prefixes to be ignored. Dependencies from the ignored packages are still checked. Can be specified multiple times.")
+	rootCmd.PersistentFlags().BoolVar(&useWorkspace, "use_workspace", false, "Determine packages from a go workspace file")
+	rootCmd.PersistentFlags().StringVar(&goworkFile, "go_work_file", "", "The go workspace file to use. Ignored if --use-workspace is not set. If not set, it will be looked for in the current directory and above")
 }
 
 func main() {

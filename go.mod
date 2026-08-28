@@ -1,4 +1,4 @@
-module github.com/nammn/go-licenses/v2
+module github.com/jghiloni/go-licenses/v2
 
 go 1.23.0
 
