@@ -20,6 +20,7 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -51,10 +52,12 @@ var (
 	}
 
 	templateFile string
+	outputFile   string
 )
 
 func init() {
 	reportCmd.Flags().StringVar(&templateFile, "template", "", "Custom Go template file to use for report")
+	reportCmd.Flags().StringVar(&outputFile, "output", "-", "If set to a file, write to it. If not set or set to -, write to stdout")
 
 	rootCmd.AddCommand(reportCmd)
 }
@@ -183,26 +186,19 @@ func getModuleFromGomod(pkgRoot string) string {
 }
 
 func getPackages(cmd *cobra.Command, args []string) ([]string, error) {
-	useWorkFlag := cmd.Flag("use_workspace")
-	workFileFlag := cmd.Flag("go_work_file")
-	workFile := ""
-	if useWorkFlag != nil && useWorkFlag.Value.String() == trueStr {
-		if workFileFlag != nil {
-			workFile = workFileFlag.Value.String()
-		}
+	if useWorkspace {
 
-		if workFile == "" {
+		if goworkFile == "" {
 			var err error
-			if workFile, err = findGoWorkFile(); err != nil {
+			if goworkFile, err = findGoWorkFile(); err != nil {
 				return nil, err
 			}
 		}
 
-		abs, err := filepath.Abs(workFile)
+		abs, err := filepath.Abs(goworkFile)
 		if err != nil {
 			return nil, fmt.Errorf("could not resolve go.work file: %w", err)
 		}
-		
 
 		stat, err := os.Stat(abs)
 		if err != nil {
@@ -210,7 +206,7 @@ func getPackages(cmd *cobra.Command, args []string) ([]string, error) {
 		}
 
 		if stat.IsDir() || (stat.Mode()&0o400 != 0o400) {
-			return nil, fmt.Errorf("%s is not a readable go.work file", workFile)
+			return nil, fmt.Errorf("%s is not a readable go.work file", goworkFile)
 		}
 
 		args = append(getPackagesFromGoWorkFile(abs), args...)
@@ -316,15 +312,26 @@ func reportMain(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	var out io.WriteCloser
+	switch outputFile {
+	case "-":
+		out = os.Stdout
+	default:
+		if out, err = os.Create(outputFile); err != nil {
+			return err
+		}
+		defer out.Close()
+	}
+
 	if templateFile == "" {
-		return reportCSV(reportDataFlat)
+		return reportCSV(out, reportDataFlat)
 	} else {
-		return reportTemplate(reportDataFlat)
+		return reportTemplate(out, reportDataFlat)
 	}
 }
 
-func reportCSV(libs []libraryDataFlat) error {
-	writer := csv.NewWriter(os.Stdout)
+func reportCSV(out io.Writer, libs []libraryDataFlat) error {
+	writer := csv.NewWriter(out)
 	for _, lib := range libs {
 		if err := writer.Write([]string{lib.Name, lib.LicenseURL, lib.LicenseName}); err != nil {
 			return err
@@ -334,7 +341,7 @@ func reportCSV(libs []libraryDataFlat) error {
 	return writer.Error()
 }
 
-func reportTemplate(libs []libraryDataFlat) error {
+func reportTemplate(out io.Writer, libs []libraryDataFlat) error {
 	templateBytes, err := os.ReadFile(templateFile)
 	if err != nil {
 		return err
@@ -343,5 +350,5 @@ func reportTemplate(libs []libraryDataFlat) error {
 	if err != nil {
 		return err
 	}
-	return tmpl.Execute(os.Stdout, libs)
+	return tmpl.Execute(out, libs)
 }
